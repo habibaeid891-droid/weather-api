@@ -9,6 +9,9 @@ import admin from "firebase-admin";
 
 const app = express();
 app.use(express.json());
+app.get("/", (req, res) => {
+  res.send("Weather MCP Server is running 🚀");
+});
 
 const server = new McpServer({
   name: "weather",
