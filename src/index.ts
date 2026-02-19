@@ -1,148 +1,80 @@
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/http.js";
 import express from "express";
+import { z } from "zod";
 
 const app = express();
 app.use(express.json());
 
+const server = new McpServer({
+  name: "weather",
+  version: "1.0.0",
+});
+
 const NWS_API_BASE = "https://api.weather.gov";
 const USER_AGENT = "weather-app/1.0";
 
-// Helper function
+// helper
 async function makeNWSRequest<T>(url: string): Promise<T | null> {
-  const headers = {
-    "User-Agent": USER_AGENT,
-    Accept: "application/geo+json",
-  };
-
   try {
-    const response = await fetch(url, { headers });
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": USER_AGENT,
+        Accept: "application/geo+json",
+      },
+    });
+
+    if (!response.ok) throw new Error("Request failed");
     return (await response.json()) as T;
   } catch (error) {
-    console.error("Error making NWS request:", error);
+    console.error(error);
     return null;
   }
 }
 
-interface AlertFeature {
-  properties: {
-    event?: string;
-    areaDesc?: string;
-    severity?: string;
-    status?: string;
-    headline?: string;
-  };
-}
+// tool
+server.tool(
+  "get-forecast",
+  "Get weather forecast for coordinates",
+  {
+    latitude: z.number(),
+    longitude: z.number(),
+  },
+  async ({ latitude, longitude }) => {
+    const pointsUrl = `${NWS_API_BASE}/points/${latitude},${longitude}`;
+    const points = await makeNWSRequest<any>(pointsUrl);
 
-interface AlertsResponse {
-  features: AlertFeature[];
-}
+    if (!points?.properties?.forecast) {
+      return { content: [{ type: "text", text: "Location not supported" }] };
+    }
 
-interface PointsResponse {
-  properties: {
-    forecast?: string;
-  };
-}
+    const forecast = await makeNWSRequest<any>(
+      points.properties.forecast
+    );
 
-interface ForecastPeriod {
-  name?: string;
-  temperature?: number;
-  temperatureUnit?: string;
-  windSpeed?: string;
-  windDirection?: string;
-  shortForecast?: string;
-}
-
-interface ForecastResponse {
-  properties: {
-    periods: ForecastPeriod[];
-  };
-}
-
-// -----------------------------
-// GET ALERTS
-// -----------------------------
-app.get("/alerts/:state", async (req, res) => {
-  const stateCode = req.params.state.toUpperCase();
-  const alertsUrl = `${NWS_API_BASE}/alerts?area=${stateCode}`;
-
-  const alertsData = await makeNWSRequest<AlertsResponse>(alertsUrl);
-
-  if (!alertsData) {
-    return res.status(500).json({ error: "Failed to retrieve alerts data" });
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(forecast.properties.periods.slice(0, 5), null, 2),
+        },
+      ],
+    };
   }
+);
 
-  if (!alertsData.features || alertsData.features.length === 0) {
-    return res.json({ message: `No active alerts for ${stateCode}` });
-  }
-
-  const formatted = alertsData.features.map((feature) => ({
-    event: feature.properties.event,
-    area: feature.properties.areaDesc,
-    severity: feature.properties.severity,
-    headline: feature.properties.headline,
-  }));
-
-  res.json({ state: stateCode, alerts: formatted });
+// HTTP transport
+const transport = new StreamableHTTPServerTransport({
+  sessionIdGenerator: () => crypto.randomUUID(),
 });
 
-// -----------------------------
-// GET FORECAST
-// -----------------------------
-app.get("/forecast", async (req, res) => {
-  const { latitude, longitude } = req.query;
+await server.connect(transport);
 
-  if (!latitude || !longitude) {
-    return res.status(400).json({
-      error: "Please provide latitude and longitude query parameters",
-    });
-  }
-
-  const lat = Number(latitude);
-  const lon = Number(longitude);
-
-  const pointsUrl = `${NWS_API_BASE}/points/${lat},${lon}`;
-  const pointsData = await makeNWSRequest<PointsResponse>(pointsUrl);
-
-  if (!pointsData?.properties?.forecast) {
-    return res.status(400).json({
-      error: "Invalid location or unsupported by NWS (US only)",
-    });
-  }
-
-  const forecastData = await makeNWSRequest<ForecastResponse>(
-    pointsData.properties.forecast
-  );
-
-  if (!forecastData?.properties?.periods) {
-    return res.status(500).json({
-      error: "Failed to retrieve forecast data",
-    });
-  }
-
-  const periods = forecastData.properties.periods.map((period) => ({
-    name: period.name,
-    temperature: `${period.temperature}°${period.temperatureUnit}`,
-    wind: `${period.windSpeed} ${period.windDirection}`,
-    forecast: period.shortForecast,
-  }));
-
-  res.json({
-    location: { latitude: lat, longitude: lon },
-    forecast: periods,
-  });
-});
-
-// -----------------------------
-// HEALTH CHECK
-// -----------------------------
-app.get("/", (_, res) => {
-  res.json({ message: "Weather API is running" });
+app.post("/mcp", async (req, res) => {
+  await transport.handleRequest(req, res, req.body);
 });
 
 const PORT = process.env.PORT || 3000;
-
 app.listen(PORT, () => {
-  console.log(`Weather API running on port ${PORT}`);
+  console.log(`MCP HTTP Server running on port ${PORT}`);
 });
