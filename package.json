@@ -19,12 +19,14 @@
   "description": "",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
+    "@upstash/redis": "^1.36.2",
     "express": "^5.2.1",
+    "firebase-admin": "^13.6.1",
     "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
-    "@types/node": "^22.14.1",
+    "@types/node": "^22.19.11",
     "typescript": "^5.8.3"
   }
 }
